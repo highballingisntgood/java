@@ -12,12 +12,11 @@ public class Main {
         try {
             serverSocket = new ServerSocket(5555);
             System.out.println("Server started.");
+
             while (running) {
                 try {
                     Socket socket = serverSocket.accept();
-                    Server server = new Server(socket);
-                    Thread thread = new Thread(server);
-                    thread.start();
+                    new Thread(new Server(socket)).start();
                 } catch (IOException e) {
                     if (!running) {
                         System.out.println("Server stopped.");
@@ -26,6 +25,8 @@ public class Main {
                     throw new RuntimeException(e);
                 }
             }
+
+            serverSocket.close();
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
