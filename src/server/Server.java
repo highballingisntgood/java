@@ -1,49 +1,65 @@
 package server;
 
-import java.io.BufferedReader;
-import java.io.IOException;
-import java.io.InputStreamReader;
-import java.io.PrintWriter;
-import java.net.Socket;
+import java.io.*;
+import java.net.*;
+import java.util.concurrent.ConcurrentHashMap;
 
-public class Server implements Runnable {
-    private final Socket socket;
+public class Server {
+    private static final int PORT = 12345;
+    private static final ConcurrentHashMap<String, PrintWriter> clientMap = new ConcurrentHashMap<>();
 
-    public Server(Socket socket) {
-        this.socket = socket;
-    }
+    public static void main(String[] args) {
+        System.out.println("Relay Server started on port " + PORT);
 
+        try (ServerSocket serverSocket = new ServerSocket(PORT)) {
+            while (true) {
+                Socket clientSocket = serverSocket.accept();
 
-    @Override
-    public void run() {
-        try {
-            String remote_ip = socket.getInetAddress().getHostAddress();
-            int remote_port = socket.getPort();
+                String clientIP = clientSocket.getInetAddress().getHostAddress();
+                System.out.println("New connection from: " + clientIP);
 
-            String local_ip = socket.getLocalAddress().getHostAddress();
-            int local_port = socket.getLocalPort();
-
-            System.out.println("Client connected. Source IP: " + remote_ip + " | Destination IP: " + local_ip + " | Source Port: " + remote_port + " | Destination Port: " + local_port);
-
-            PrintWriter out = new PrintWriter(socket.getOutputStream(), true);
-            BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
-
-            out.println("Successfully connected to TCP server.");
-            String line;
-
-            while ((line = in.readLine()) != null) {
-                System.out.println("Client " + remote_ip + " message: '" + line + "'");
-                if (line.equals("exit")) {
-                    break;
-                }
+                new Thread(new ClientHandler(clientSocket, clientIP)).start();
             }
-
-            in.close();
-            out.close();
-            socket.close();
-            System.out.println("Client " + remote_ip + " disconnected.");
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
     }
+
+    private record ClientHandler(Socket socket, String clientIP) implements Runnable {
+
+        @Override
+            public void run() {
+                try (
+                        BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+                        PrintWriter out = new PrintWriter(socket.getOutputStream(), true)
+                ) {
+                    clientMap.put(clientIP, out);
+
+                    String inputLine;
+                    while ((inputLine = in.readLine()) != null) {
+                        if (inputLine.contains(":")) {
+                            String[] parts = inputLine.split(":", 2);
+                            String targetIP = parts[0];
+                            String message = parts[1];
+
+                            PrintWriter targetWriter = clientMap.get(targetIP);
+                            if (targetWriter != null) {
+                                System.out.println("Relaying message from " + clientIP + " to " + targetIP);
+                                targetWriter.println(message);
+                            } else {
+                                out.println("System: Target " + targetIP + " not found.");
+                            }
+                        }
+                    }
+                } catch (IOException e) {
+                    System.out.println("Client " + clientIP + " disconnected.");
+                } finally {
+                    clientMap.remove(clientIP);
+                    try {
+                        socket.close();
+                    } catch (IOException ignored) {
+                    }
+                }
+            }
+        }
 }
