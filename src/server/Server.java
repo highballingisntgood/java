@@ -1,77 +1,95 @@
 package server;
 
-import java.io.BufferedReader;
-import java.io.IOException;
-import java.io.InputStreamReader;
-import java.io.PrintWriter;
-import java.net.ServerSocket;
-import java.net.Socket;
+import java.io.*;
+import java.net.*;
+import java.util.concurrent.ConcurrentHashMap;
 
-public class Server implements Runnable {
-    private final Socket socket;
+public class Server {
 
-    public Server(Socket socket) {
-        this.socket = socket;
-    }
+    private static final ConcurrentHashMap<String, PrintWriter> clients = new ConcurrentHashMap<>();
 
+    public static void main(String[] args) {
+        try (ServerSocket serverSocket = new ServerSocket(5555)) {
+            System.out.println("Server started on port 5555.");
 
-    @Override
-    public void run() {
-        try {
-            String remote_ip = socket.getInetAddress().getHostAddress();
-            int remote_port = socket.getPort();
-
-            String local_ip = socket.getLocalAddress().getHostAddress();
-            int local_port = socket.getLocalPort();
-
-            System.out.println("Client connected. Source IP: " + remote_ip + " | Destination IP: " + local_ip + " | Source Port: " + remote_port + " | Destination Port: " + local_port);
-
-            PrintWriter out = new PrintWriter(socket.getOutputStream(), true);
-            BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
-
-            out.println("Successfully connected to TCP server.");
-            String line;
-
-            while ((line = in.readLine()) != null) {
-                System.out.println("Client " + remote_ip + " message: '" + line + "'");
-                if (line.equals("exit")) {
-                    break;
-                }
+            while (true) {
+                Socket socket = serverSocket.accept();
+                new Thread(() -> handleClient(socket)).start();
             }
 
-            in.close();
-            out.close();
-            socket.close();
-            System.out.println("Client " + remote_ip + " disconnected.");
-        } catch (IOException e) {
-            throw new RuntimeException(e);
+        } catch (IOException ignored) {
+            System.out.println("Server haven't started on port 5555.");
         }
     }
 
-    static volatile boolean running = true;
-    static ServerSocket serverSocket;
+    private static void handleClient(Socket socket) {
+        String username = null;
 
-    public static void main(String[] args) {
         try {
-            serverSocket = new ServerSocket(5555);
-            System.out.println("Server started.");
+            PrintWriter out = new PrintWriter(socket.getOutputStream(), true);
+            BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
 
-            while (running) {
-                try {
-                    Socket socket = serverSocket.accept();
-                    new Thread(new Server(socket)).start();
-                } catch (IOException e) {
-                    if (!running) {
-                        System.out.println("Server stopped.");
-                        break;
-                    }
-                    throw new RuntimeException(e);
+            out.println("Connected to server.");
+
+            while (true) {
+                username = in.readLine().toLowerCase();
+
+                if (username.trim().isEmpty() || username.equalsIgnoreCase("exit")) {
+                    socket.close();
+                    return;
+                }
+
+                if (clients.putIfAbsent(username, out) == null) {
+                    out.println("GOOD");
+                    break;
+                } else {
+                    out.println("BAD");
                 }
             }
 
-            serverSocket.close();
-        } catch (IOException e) {
-            throw new RuntimeException(e);
+            System.out.println(username + " joined");
+
+            String line;
+            while ((line = in.readLine()) != null) {
+
+                if (line.equalsIgnoreCase("exit")) {
+                    break;
+                }
+
+                String[] parts = line.split(":", 2);
+
+                if (parts.length == 2) {
+                    String recipient = parts[0].trim().toLowerCase();
+                    String message = parts[1].trim();
+
+                    PrintWriter receiver = clients.get(recipient);
+
+                    if (receiver != null) {
+                        if (recipient.equals(username)) {
+                            out.println("You can't chat with yourself.");
+                        } else {
+                            receiver.println(username + ": " + message);
+                        }
+                    } else {
+                        out.println("User not found.");
+                    }
+                } else {
+                    out.println("\nYou can start chatting (user:message).");
+                }
+            }
+
+        } catch (IOException ignored) {
+            System.out.println("Client disconnected.");
+
+        } finally {
+            try {
+                if (username != null) {
+                    clients.remove(username);
+                    System.out.println(username + " left");
+                }
+
+                socket.close();
+            } catch (IOException ignored) {}
         }
     }
 }
